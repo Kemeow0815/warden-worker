@@ -3,7 +3,9 @@ use axum::Json;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
-use worker::{query, Env};
+use worker::Env;
+
+use crate::d1_query;
 
 use crate::auth::Claims;
 use crate::db::{self, touch_user_updated_at};
@@ -43,7 +45,7 @@ pub async fn get_folder(
 ) -> Result<Json<FolderResponse>, AppError> {
     let db = db::get_db(&env)?;
 
-    let folder: Folder = query!(
+    let folder: Folder = d1_query!(
         &db,
         "SELECT * FROM folders WHERE id = ?1 AND user_id = ?2",
         &id,
@@ -78,7 +80,7 @@ pub async fn create_folder(
         updated_at: now.clone(),
     };
 
-    query!(
+    d1_query!(
         &db,
         "INSERT INTO folders (id, user_id, name, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
         folder.id,
@@ -93,22 +95,21 @@ pub async fn create_folder(
 
     touch_user_updated_at(&db, &claims.sub, &folder.updated_at).await?;
 
-    notifications::publish_folder_update(
-        env.as_ref(),
-        &claims.sub,
-        UpdateType::SyncFolderCreate,
-        &folder.id,
-        &folder.updated_at,
-        Some(&claims.device),
-    )
-    .await;
-
     let response = FolderResponse {
-        id: folder.id,
+        id: folder.id.clone(),
         name: folder.name,
-        revision_date: folder.updated_at,
+        revision_date: folder.updated_at.clone(),
         object: "folder".to_string(),
     };
+
+    notifications::publish_folder_update(
+        (*env).clone(),
+        claims.sub,
+        UpdateType::SyncFolderCreate,
+        folder.id,
+        folder.updated_at,
+        Some(claims.device),
+    );
 
     Ok(Json(response))
 }
@@ -122,7 +123,7 @@ pub async fn delete_folder(
     let db = db::get_db(&env)?;
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "DELETE FROM folders WHERE id = ?1 AND user_id = ?2",
         id,
@@ -135,14 +136,13 @@ pub async fn delete_folder(
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_folder_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncFolderDelete,
-        &id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -156,7 +156,7 @@ pub async fn update_folder(
     let db = db::get_db(&env)?;
     let now = db::now_string();
 
-    let existing_folder: Folder = query!(
+    let existing_folder: Folder = d1_query!(
         &db,
         "SELECT * FROM folders WHERE id = ?1 AND user_id = ?2",
         id,
@@ -175,7 +175,7 @@ pub async fn update_folder(
         updated_at: now.clone(),
     };
 
-    query!(
+    d1_query!(
         &db,
         "UPDATE folders SET name = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
         folder.name,
@@ -189,22 +189,21 @@ pub async fn update_folder(
 
     touch_user_updated_at(&db, &claims.sub, &folder.updated_at).await?;
 
-    notifications::publish_folder_update(
-        env.as_ref(),
-        &claims.sub,
-        UpdateType::SyncFolderUpdate,
-        &folder.id,
-        &folder.updated_at,
-        Some(&claims.device),
-    )
-    .await;
-
     let response = FolderResponse {
-        id: folder.id,
+        id: folder.id.clone(),
         name: folder.name,
-        revision_date: folder.updated_at,
+        revision_date: folder.updated_at.clone(),
         object: "folder".to_string(),
     };
+
+    notifications::publish_folder_update(
+        (*env).clone(),
+        claims.sub,
+        UpdateType::SyncFolderUpdate,
+        folder.id,
+        folder.updated_at,
+        Some(claims.device),
+    );
 
     Ok(Json(response))
 }

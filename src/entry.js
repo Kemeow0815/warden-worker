@@ -58,11 +58,10 @@ function normalizePathname(pathname) {
 async function getHeavyDoShardKey(request, url) {
   const pathname = url.pathname;
 
-  // Registration endpoints and 2FA recovery are not JWT-authenticated; request body uses `email` as username.
+  // Registration endpoints are not JWT-authenticated; request body uses `email` as username.
   if (
     pathname === "/identity/accounts/register" ||
-    pathname === "/identity/accounts/register/finish" ||
-    pathname === "/api/two-factor/recover"
+    pathname === "/identity/accounts/register/finish"
   ) {
     try {
       const body = await request.clone().json();
@@ -100,6 +99,9 @@ const HEAVY_DO_ROUTE_METHODS = new Map([
   ["/api/accounts", new Set(["DELETE"])],
   ["/api/ciphers/purge", new Set(["POST"])],
 
+  // Security stamp rotation requires password verification
+  ["/api/accounts/security-stamp", new Set(["POST"])],
+
   // Key rotation needs verify master password and update entire vault
   ["/api/accounts/key-management/rotate-user-account-keys", new Set(["POST"])],
 
@@ -108,7 +110,6 @@ const HEAVY_DO_ROUTE_METHODS = new Map([
   ["/api/two-factor/authenticator", new Set(["POST", "PUT", "DELETE"])],
   ["/api/two-factor/disable", new Set(["POST", "PUT"])],
   ["/api/two-factor/get-recover", new Set(["POST"])],
-  ["/api/two-factor/recover", new Set(["POST"])],
 ]);
 
 function shouldOffloadToHeavyDo(request, url) {
@@ -141,13 +142,18 @@ export default {
     // This keeps the main Worker on a low-CPU path while allowing heavy work to complete.
     if (env.HEAVY_DO) {
       // Token endpoint:
-      // - password grant is CPU-heavy (password verification) => offload
+      // - plain password grant is CPU-heavy (password verification / KDF migration) => offload
+      // - authrequest password grant skips master-password verification => keep in Worker/WASM
       // - refresh_token grant is lightweight (JWT HS256 verify) => keep in Worker/WASM
       if (url.pathname === "/identity/connect/token" && method === "POST") {
         const body = await request.clone().text();
         const params = new URLSearchParams(body);
         const grantType = params.get("grant_type");
-        if (grantType !== "refresh_token") {
+        const authRequest =
+          params.get("authrequest") ||
+          params.get("authRequest");
+
+        if (grantType === "password" && !authRequest) {
           const shardKey = normalizeUsername(params.get("username"));
           const name = shardKey ? `user:${shardKey}` : "user:default";
           const id = env.HEAVY_DO.idFromName(name);

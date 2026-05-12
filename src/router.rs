@@ -6,8 +6,8 @@ use std::sync::Arc;
 use worker::Env;
 
 use crate::handlers::{
-    accounts, attachments, ciphers, config, devices, domains, emergency_access, folders, identity,
-    import, meta, sends, sync, twofactor, webauth,
+    accounts, attachments, auth_requests, ciphers, config, devices, domains, emergency_access,
+    folders, identity, import, meta, sends, sync, twofactor, webauth,
 };
 
 pub fn api_router(env: Env) -> Router {
@@ -16,6 +16,10 @@ pub fn api_router(env: Env) -> Router {
     Router::new()
         // Identity/Auth routes
         .route("/identity/accounts/prelogin", post(accounts::prelogin))
+        .route(
+            "/identity/accounts/prelogin/password",
+            post(accounts::prelogin),
+        )
         .route("/identity/accounts/register", post(accounts::register))
         .route(
             "/identity/accounts/register/finish",
@@ -31,7 +35,7 @@ pub fn api_router(env: Env) -> Router {
         // For on-demand sync checks
         .route("/api/accounts/revision-date", get(accounts::revision_date))
         .route("/api/accounts/password-hint", post(accounts::password_hint))
-        .route("/api/accounts/tasks", get(accounts::get_tasks))
+        .route("/api/tasks", get(accounts::get_tasks))
         .route("/api/accounts/profile", get(accounts::get_profile))
         .route("/api/accounts/profile", post(accounts::post_profile))
         .route("/api/accounts/profile", put(accounts::put_profile))
@@ -50,11 +54,22 @@ pub fn api_router(env: Env) -> Router {
             "/api/accounts/key-management/rotate-user-account-keys",
             post(accounts::post_rotatekey),
         )
-        // Auth requests (login with device) - stub to prevent client 404s
-        .route("/api/auth-requests", get(accounts::get_auth_requests))
+        // Auth requests (login with device)
+        .route(
+            "/api/auth-requests",
+            get(auth_requests::get_auth_requests).post(auth_requests::post_auth_request),
+        )
         .route(
             "/api/auth-requests/pending",
-            get(accounts::get_auth_requests_pending),
+            get(auth_requests::get_auth_requests_pending),
+        )
+        .route(
+            "/api/auth-requests/{id}/response",
+            get(auth_requests::get_auth_request_response),
+        )
+        .route(
+            "/api/auth-requests/{id}",
+            get(auth_requests::get_auth_request).put(auth_requests::put_auth_request),
         )
         // Ciphers CRUD
         .route("/api/ciphers", get(ciphers::list_ciphers))
@@ -245,6 +260,5 @@ pub fn api_router(env: Env) -> Router {
             put(twofactor::disable_twofactor_put),
         )
         .route("/api/two-factor/get-recover", post(twofactor::get_recover))
-        .route("/api/two-factor/recover", post(twofactor::recover))
         .with_state(app_state)
 }

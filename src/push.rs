@@ -292,7 +292,7 @@ async fn post_to_relay(
 // ── D1 queries (push device checks) ────────────────────────────
 
 pub async fn user_has_push_device(env: &Env, user_id: &str) -> Result<bool, AppError> {
-    let db = db::get_db(env)?;
+    let db = db::get_db_unconstrained(env)?;
     let count: Option<f64> = db
         .prepare(
             "SELECT COUNT(*) as cnt FROM devices WHERE user_id = ?1 AND push_token IS NOT NULL AND push_uuid IS NOT NULL",
@@ -310,7 +310,7 @@ pub async fn lookup_device_push_info(
     user_id: &str,
     device_identifier: &str,
 ) -> Result<Option<DevicePushInfo>, AppError> {
-    let db = db::get_db(env)?;
+    let db = db::get_db_unconstrained(env)?;
     let row: Option<Value> = db
         .prepare("SELECT push_uuid, identifier FROM devices WHERE identifier = ?1 AND user_id = ?2")
         .bind(&[device_identifier.into(), user_id.into()])
@@ -328,7 +328,7 @@ pub async fn unregister_push_devices_by_user(env: &Env, user_id: &str) {
     let Some(cfg) = try_get_push_config(env) else {
         return;
     };
-    let db = match db::get_db(env) {
+    let db = match db::get_db_unconstrained(env) {
         Ok(db) => db,
         Err(_) => return,
     };
@@ -530,9 +530,10 @@ pub async fn push_send_update(
     }
 }
 
-pub async fn push_auth_request(
+pub async fn push_auth_update(
     env: &Env,
     user_id: &str,
+    update_type: i32,
     auth_request_id: &str,
     context_id: Option<&str>,
 ) {
@@ -548,7 +549,7 @@ pub async fn push_auth_request(
         "organizationId": null,
         "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
         "identifier": device.as_ref().map(|d| d.identifier.as_str()),
-        "type": 15,
+        "type": update_type,
         "payload": {
             "userId": user_id,
             "id": auth_request_id,
@@ -557,37 +558,6 @@ pub async fn push_auth_request(
         "installationId": null,
     });
     if let Err(e) = send_to_push_relay(&cfg, &payload).await {
-        log::warn!("Push relay failed for auth_request: {e}");
-    }
-}
-
-pub async fn push_auth_response(
-    env: &Env,
-    user_id: &str,
-    auth_request_id: &str,
-    context_id: Option<&str>,
-) {
-    let Some(cfg) = try_get_push_config(env) else {
-        return;
-    };
-    if !user_has_push_device(env, user_id).await.unwrap_or(false) {
-        return;
-    }
-    let device = resolve_device_info(env, user_id, context_id).await;
-    let payload = json!({
-        "userId": user_id,
-        "organizationId": null,
-        "deviceId": device.as_ref().and_then(|d| d.push_uuid.as_deref()),
-        "identifier": device.as_ref().map(|d| d.identifier.as_str()),
-        "type": 16,
-        "payload": {
-            "userId": user_id,
-            "id": auth_request_id,
-        },
-        "clientType": null,
-        "installationId": null,
-    });
-    if let Err(e) = send_to_push_relay(&cfg, &payload).await {
-        log::warn!("Push relay failed for auth_response: {e}");
+        log::warn!("Push relay failed for auth update (type {update_type}): {e}");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "warden-worker"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["qaz741wsd856"]
 
@@ -16,12 +16,12 @@ codegen-units = 1
 
 [dependencies]
 # Worker & Web APIs
-worker = { version = "0.8.1", features = ["axum", "http", "d1"] }
-worker-macros = { version = "0.8.1", features = ['http'] }
+worker = { version = "0.8.3", features = ["axum", "http", "d1"] }
+worker-macros = { version = "0.8.3", features = ['http'] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
 wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Crypto", "CryptoKey", "SubtleCrypto", "UrlSearchParams", "WorkerGlobalScope"] }
+web-sys = { version = "0.3", features = ["Crypto", "CryptoKey", "SubtleCrypto", "UrlSearchParams", "WorkerGlobalScope", "Pbkdf2Params"] }
 console_error_panic_hook = "0.1.7"
 wasm-streams = "0.5"
 

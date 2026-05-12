@@ -10,7 +10,9 @@ use jwt_compact::AlgorithmExt;
 use jwt_compact::{alg::Hs256Key, Claims as JwtClaims, Header};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use worker::{D1Database, Env};
+use worker::Env;
+
+use crate::d1_query;
 
 use crate::{
     auth::{Claims, JWT_VALIDATION_LEEWAY_SECS},
@@ -209,7 +211,7 @@ fn apply_update(
     Ok(())
 }
 
-async fn resolve_creator_identifier(db: &D1Database, send: &SendDB) -> Option<String> {
+async fn resolve_creator_identifier(db: &crate::db::Db, send: &SendDB) -> Option<String> {
     if send.hide_email != 0 {
         return None;
     }
@@ -291,17 +293,17 @@ pub async fn create_text_send(
     send.insert(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendCreate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/file/v2 (preferred file send creation) ──────────
@@ -480,17 +482,17 @@ pub async fn create_file_send_legacy(
     send.insert(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendCreate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/{send_id}/file/{file_id} (Direct upload compat) ─
@@ -559,14 +561,13 @@ pub async fn upload_file_send_direct(
     db::touch_user_updated_at(&db, &claims.sub, &pending.updated_at).await?;
 
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendCreate,
-        &pending.id,
-        &pending.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        pending.id,
+        pending.updated_at,
+        Some(claims.device),
+    );
 
     Ok(())
 }
@@ -612,17 +613,17 @@ pub async fn update_send(
     send.update(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── DELETE /api/sends/{send_id} ─────────────────────────────────────
@@ -647,14 +648,13 @@ pub async fn delete_send(
     let now = db::now_string();
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendDelete,
-        &send_id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        send_id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(())
 }
@@ -676,17 +676,17 @@ pub async fn remove_password(
     send.update(&db).await?;
     db::touch_user_updated_at(&db, &claims.sub, &send.updated_at).await?;
 
+    let response = send.to_json();
     notifications::publish_send_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
-        Some(&claims.device),
-    )
-    .await;
+        send.id,
+        send.updated_at,
+        Some(claims.device),
+    );
 
-    Ok(Json(send.to_json()))
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/access/{access_id} (anonymous access) ──────────
@@ -731,18 +731,18 @@ pub async fn access_send(
 
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
 
-    notifications::publish_send_update(
-        env.as_ref(),
-        &send.user_id,
-        UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
-        None,
-    )
-    .await;
-
     let creator_id = resolve_creator_identifier(&db, &send).await;
-    Ok(Json(send.to_access_json(creator_id.as_deref())))
+    let response = send.to_access_json(creator_id.as_deref());
+    notifications::publish_send_update(
+        (*env).clone(),
+        send.user_id,
+        UpdateType::SyncSendUpdate,
+        send.id,
+        send.updated_at,
+        None,
+    );
+
+    Ok(Json(response))
 }
 
 // ── POST /api/sends/{send_id}/access/file/{file_id} (anonymous file) ─
@@ -779,14 +779,13 @@ pub async fn access_file_send(
     db::touch_user_updated_at(&db, &send.user_id, &send.updated_at).await?;
 
     notifications::publish_send_update(
-        env.as_ref(),
-        &send.user_id,
+        (*env).clone(),
+        send.user_id,
         UpdateType::SyncSendUpdate,
-        &send.id,
-        &send.updated_at,
+        send.id,
+        send.updated_at,
         None,
-    )
-    .await;
+    );
 
     let token = build_download_token(&env, &send_id, &file_id)?;
     let url = format!("{base_url}/api/sends/{send_id}/{file_id}?t={token}");
@@ -801,7 +800,7 @@ pub async fn access_file_send(
 // ── Key rotation support ────────────────────────────────────────────
 
 pub async fn rotate_user_sends(
-    db: &D1Database,
+    db: &crate::db::Db,
     _env: &Env,
     user_id: &str,
     sends: &[SendRequestData],
@@ -836,7 +835,7 @@ pub async fn rotate_user_sends(
             continue;
         };
 
-        let stmt = worker::query!(
+        let stmt = d1_query!(
             db,
             "UPDATE sends SET name = ?1, notes = ?2, data = ?3, akey = ?4, updated_at = ?5 WHERE id = ?6 AND user_id = ?7",
             send_data.name,
@@ -857,7 +856,11 @@ pub async fn rotate_user_sends(
 
 // ── Cleanup helpers ─────────────────────────────────────────────────
 
-pub async fn delete_user_sends(db: &D1Database, env: &Env, user_id: &str) -> Result<(), AppError> {
+pub async fn delete_user_sends(
+    db: &crate::db::Db,
+    env: &Env,
+    user_id: &str,
+) -> Result<(), AppError> {
     if attachments_enabled(env) {
         let keys = SendDB::storage_keys_by_user(db, user_id).await?;
         if !keys.is_empty() {
@@ -873,7 +876,7 @@ pub async fn delete_user_sends(db: &D1Database, env: &Env, user_id: &str) -> Res
 
 pub async fn append_sends_json_array(
     out: &mut String,
-    db: &D1Database,
+    db: &crate::db::Db,
     user_id: &str,
 ) -> Result<(), AppError> {
     let sends = SendDB::find_by_user(db, user_id).await?;

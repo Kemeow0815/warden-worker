@@ -12,7 +12,9 @@ use log;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use worker::{query, wasm_bindgen::JsValue, D1Database, Env, HttpMetadata};
+use worker::{wasm_bindgen::JsValue, Env, HttpMetadata};
+
+use crate::d1_query;
 
 use crate::{
     auth::{Claims, JWT_VALIDATION_LEEWAY_SECS},
@@ -131,11 +133,11 @@ impl NumberOrString {
 }
 
 pub(crate) async fn touch_cipher_updated_at(
-    db: &D1Database,
+    db: &crate::db::Db,
     cipher_id: &str,
     now: &str,
 ) -> Result<(), AppError> {
-    query!(
+    d1_query!(
         db,
         "UPDATE ciphers SET updated_at = ?1 WHERE id = ?2",
         now,
@@ -192,7 +194,7 @@ pub async fn create_attachment_v2(
     let attachment_id = Uuid::new_v4().to_string();
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "INSERT INTO attachments_pending (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
@@ -281,7 +283,7 @@ pub async fn upload_attachment_v2_data(
     let actual_size = file_bytes.len() as i64;
 
     if actual_size != pending.file_size {
-        query!(
+        d1_query!(
             &db,
             "DELETE FROM attachments_pending WHERE id = ?1",
             pending.id
@@ -310,14 +312,13 @@ pub async fn upload_attachment_v2_data(
     touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub,
         UpdateType::SyncCipherUpdate,
-        &cipher_id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        cipher_id,
+        now,
+        Some(claims.device),
+    );
 
     Ok(Json(()))
 }
@@ -358,7 +359,7 @@ pub async fn upload_attachment_legacy(
     let attachment_id = Uuid::new_v4().to_string();
     let now = db::now_string();
 
-    query!(
+    d1_query!(
         &db,
         "INSERT INTO attachments (id, cipher_id, file_name, file_size, akey, created_at, updated_at, organization_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
@@ -387,14 +388,13 @@ pub async fn upload_attachment_legacy(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub.clone(),
         UpdateType::SyncCipherUpdate,
-        &cipher_id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        cipher_id.clone(),
+        now.clone(),
+        Some(claims.device),
+    );
 
     // reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = cipher.into();
@@ -466,7 +466,7 @@ pub async fn delete_attachment(
     // Delete storage object; ignore missing objects
     delete_storage_objects(&env, &[attachment.r2_key()]).await?;
 
-    query!(&db, "DELETE FROM attachments WHERE id = ?1", attachment.id)
+    d1_query!(&db, "DELETE FROM attachments WHERE id = ?1", attachment.id)
         .map_err(|_| AppError::Database)?
         .run()
         .await?;
@@ -476,14 +476,13 @@ pub async fn delete_attachment(
     db::touch_user_updated_at(&db, &claims.sub, &now).await?;
 
     notifications::publish_cipher_update(
-        env.as_ref(),
-        &claims.sub,
+        (*env).clone(),
+        claims.sub.clone(),
         UpdateType::SyncCipherUpdate,
-        &cipher_id,
-        &now,
-        Some(&claims.device),
-    )
-    .await;
+        cipher_id.clone(),
+        now.clone(),
+        Some(claims.device),
+    );
 
     // Reload cipher to return fresh updated_at and attachments state
     let mut cipher_response: Cipher = ensure_cipher_for_user(&db, &cipher_id, &claims.sub)
@@ -509,7 +508,7 @@ pub async fn delete_attachment_post(
 
 /// Attach attachment information to Cipher (used by other handlers)
 pub async fn hydrate_cipher_attachments(
-    db: &D1Database,
+    db: &crate::db::Db,
     env: &Env,
     cipher: &mut Cipher,
 ) -> Result<(), AppError> {
@@ -579,7 +578,7 @@ fn map_rows_to_keys(rows: Vec<AttachmentKeyRow>) -> Vec<String> {
 /// - `json_body`: JSON text containing the ids array
 /// - `ids_path`: path to ids array within json_body (e.g. "$.ids" or "$" if top-level)
 pub(crate) async fn list_attachment_keys_for_cipher_ids_json(
-    db: &D1Database,
+    db: &crate::db::Db,
     json_body: &str,
     ids_path: &str,
     user_id: Option<&str>,
@@ -606,7 +605,7 @@ pub(crate) async fn list_attachment_keys_for_cipher_ids_json(
 }
 
 pub(crate) async fn list_attachment_keys_for_user(
-    db: &D1Database,
+    db: &crate::db::Db,
     user_id: &str,
 ) -> Result<Vec<String>, AppError> {
     let rows: Vec<AttachmentKeyRow> = db
@@ -626,7 +625,7 @@ pub(crate) async fn list_attachment_keys_for_user(
 }
 
 pub(crate) async fn list_attachment_keys_for_soft_deleted_before(
-    db: &D1Database,
+    db: &crate::db::Db,
     cutoff_exclusive: &str,
 ) -> Result<Vec<String>, AppError> {
     let rows: Vec<AttachmentKeyRow> = db
@@ -646,7 +645,7 @@ pub(crate) async fn list_attachment_keys_for_soft_deleted_before(
 }
 
 pub(crate) async fn ensure_cipher_for_user(
-    db: &D1Database,
+    db: &crate::db::Db,
     cipher_id: &str,
     user_id: &str,
 ) -> Result<CipherDBModel, AppError> {
@@ -673,7 +672,7 @@ pub(crate) async fn ensure_cipher_for_user(
 }
 
 pub(crate) async fn fetch_attachment(
-    db: &D1Database,
+    db: &crate::db::Db,
     attachment_id: &str,
 ) -> Result<AttachmentDB, AppError> {
     db.prepare("SELECT * FROM attachments WHERE id = ?1")
@@ -685,7 +684,7 @@ pub(crate) async fn fetch_attachment(
 }
 
 pub(crate) async fn fetch_pending_attachment(
-    db: &D1Database,
+    db: &crate::db::Db,
     attachment_id: &str,
 ) -> Result<AttachmentDB, AppError> {
     db.prepare("SELECT * FROM attachments_pending WHERE id = ?1")
@@ -697,7 +696,7 @@ pub(crate) async fn fetch_pending_attachment(
 }
 
 async fn load_attachment_map_json(
-    db: &D1Database,
+    db: &crate::db::Db,
     json_body: &str,
     ids_path: &str,
 ) -> Result<HashMap<String, Vec<AttachmentResponse>>, AppError> {
@@ -879,7 +878,7 @@ fn download_ttl_secs(env: &Env) -> Result<i64, AppError> {
 }
 
 async fn enforce_limits(
-    db: &D1Database,
+    db: &crate::db::Db,
     env: &Env,
     user_id: &str,
     new_size: i64,
@@ -964,7 +963,7 @@ fn total_limit_bytes(env: &Env) -> Result<Option<u64>, AppError> {
 }
 
 async fn user_attachment_usage(
-    db: &D1Database,
+    db: &crate::db::Db,
     user_id: &str,
     exclude_attachment: Option<&str>,
 ) -> Result<i64, AppError> {
